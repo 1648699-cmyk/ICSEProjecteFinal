@@ -1,0 +1,102 @@
+#include <Wire.h>
+#include <Adafruit_Sensor.h>
+#include <Adafruit_BME280.h>
+#include <WiFi.h>
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
+
+// --- VALOR MANUAL DE LES PLAQUES ---
+// Canvia aquest número pel valor que vulguis enviar (0 a 100)
+float valorCarregaManual = 85.5; 
+// -----------------------------------
+
+// --- CONFIGURACIÓ DE TEMPS DE SON ---
+#define uS_TO_S_FACTOR 1000000ULL  
+#define TIME_TO_SLEEP  10         // (10 segons)
+
+// Configuració del sensor BME280
+Adafruit_BME280 bme; 
+
+// Configuració Wi-Fi
+const char* ssid = "icse"; 
+const char* password = "euss_2021"; 
+
+// Configuració del broker MQTT (HiveMQ)
+const char* mqtt_server = "39b9e2d2086643dd879d7cc8fd26b5bd.s1.eu.hivemq.cloud"; 
+const int mqtt_port = 8883;                    
+const char* mqtt_user = "euss_3";            
+const char* mqtt_password = "Barcelona_1";  
+
+// Topics MQTT
+const char* topic_temperature = "esp32/bme280/temperature";
+const char* topic_humidity = "esp32/bme280/humidity";
+const char* topic_carrega = "esp32/plaques/carrega"; 
+
+WiFiClientSecure espClient;
+PubSubClient client(espClient);
+
+void connectToWiFi() {
+  Serial.print("Connectant a Wi-Fi...");
+  WiFi.begin(ssid, password);
+  unsigned long startAttemptTime = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 20000) {
+    delay(500);
+    Serial.print(".");
+  }
+}
+
+void connectToMQTT() {
+  int retries = 0;
+  while (!client.connected() && retries < 5) {
+    Serial.print("Connectant MQTT...");
+    if (client.connect("ESP32Client", mqtt_user, mqtt_password)) {
+      Serial.println("Connectat!");
+    } else {
+      delay(2000);
+      retries++;
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  // Inicialitzar BME280 (Temp/Humitat)
+  if (!bme.begin(0x76)) {
+    Serial.println("Error: No s'ha trobat el BME280!");
+  }
+
+  espClient.setInsecure(); 
+  connectToWiFi();
+  client.setServer(mqtt_server, mqtt_port);
+  connectToMQTT();
+
+  if (client.connected()) {
+    // 1. Llegim temperatura i humitat reals del sensor
+    float temperature = bme.readTemperature();
+    float humidity = bme.readHumidity();
+
+    // 2. Enviem les dades (les reals i la manual de les plaques)
+    client.publish(topic_temperature, String(temperature).c_str());
+    client.publish(topic_humidity, String(humidity).c_str());
+    client.publish(topic_carrega, String(valorCarregaManual).c_str());
+    
+    Serial.println("--- Dades enviades a Node-RED ---");
+    Serial.println("Temp: " + String(temperature) + " C");
+    Serial.println("Hum: " + String(humidity) + " %");
+    Serial.println("Càrrega Manual Plaques: " + String(valorCarregaManual) + " %");
+    
+    client.loop(); 
+    delay(1000);
+  }
+
+  // Deep Sleep
+  Serial.println("Dormint 15 minuts...");
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  esp_deep_sleep_start();
+}
+
+void loop() {
+  // Buit pel Deep Sleep
+}
